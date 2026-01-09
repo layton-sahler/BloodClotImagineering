@@ -1,0 +1,12 @@
+# Ignore the build folder and all its contents
+build/
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore Qt user-specific settings
+*.user
+
+# Ignore system files
+.DS_Store
+Thumbs.db
