@@ -8,13 +8,10 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
 
     QQmlApplicationEngine engine;
-    
-<<<<<<< Updated upstream
-    const QUrl url(u"qrc:/qt/qml/SensorApp/main.qml"_s); 
-=======
-    // Change _qs to _s and update the path to the new Policy default
-    const QUrl url(u"qrc:/SensorApp/main.qml"_s);
->>>>>>> Stashed changes
+
+    // Use the modern Qt 6 URI (standard for qt_add_qml_module)
+    // If this fails, try the shorter one: u"qrc:/SensorApp/main.qml"_s
+    const QUrl url(u"qrc:/qt/qml/SensorApp/main.qml"_s);
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
         &app, [url](QObject *obj, const QUrl &objUrl) {
@@ -25,8 +22,4 @@ int main(int argc, char *argv[]) {
     engine.load(url);
 
     return app.exec();
-<<<<<<< Updated upstream
-    }
-=======
 }
->>>>>>> Stashed changes
