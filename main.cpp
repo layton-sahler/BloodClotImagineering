@@ -9,7 +9,12 @@ int main(int argc, char *argv[]) {
 
     QQmlApplicationEngine engine;
     
+<<<<<<< Updated upstream
     const QUrl url(u"qrc:/qt/qml/SensorApp/main.qml"_s); 
+=======
+    // Change _qs to _s and update the path to the new Policy default
+    const QUrl url(u"qrc:/SensorApp/main.qml"_s);
+>>>>>>> Stashed changes
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
         &app, [url](QObject *obj, const QUrl &objUrl) {
@@ -20,4 +25,8 @@ int main(int argc, char *argv[]) {
     engine.load(url);
 
     return app.exec();
+<<<<<<< Updated upstream
     }
+=======
+}
+>>>>>>> Stashed changes
