@@ -8,6 +8,7 @@
 #include <QtBluetooth/QBluetoothDeviceDiscoveryAgent>
 #include <QtBluetooth/QBluetoothDeviceInfo>
 #include <QtBluetooth/QLowEnergyController>
+#include <QtBluetooth/QBluetoothLocalDevice>
 
 class BluetoothManager : public QObject {
     Q_OBJECT
