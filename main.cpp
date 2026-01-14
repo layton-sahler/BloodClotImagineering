@@ -1,9 +1,13 @@
-#include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QObject>
+#include <QSystemTrayIcon>
+#include <QApplication>
 
 int main(int argc, char *argv[]) {
-    QGuiApplication app(argc, argv);
+    QApplication::setApplicationName("BloodClotSensorApp");
+    QApplication::setOrganizationName("Imagineering");
+    
+    QApplication app(argc, argv);
 
     QQmlApplicationEngine engine;
 
@@ -17,6 +21,8 @@ int main(int argc, char *argv[]) {
         }, Qt::QueuedConnection);
 
     engine.load(url);
-
+    QSystemTrayIcon *trayIcon = new QSystemTrayIcon(QIcon(":/assets/icon.png"), &app);
+    trayIcon->show();
+    trayIcon->showMessage("SensorApp Active", "We will notify you of sensor changes.", QSystemTrayIcon::Information, 3000);
     return app.exec();
 }
