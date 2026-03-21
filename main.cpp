@@ -1,37 +1,29 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
-#include <QQmlContext>      // Required for setContextProperty
-#include <QSystemTrayIcon>
-#include <QIcon>
-#include "notifmanager.h" // Ensure this matches your filename
+#include <QQmlContext>
+#include "btmanager.h"
+#include "notifmanager.h"
+#include <QQuickStyle>
+
+using namespace Qt::StringLiterals;
 
 int main(int argc, char *argv[]) {
-    // 1. App Setup
-    QApplication::setApplicationName("BloodClotSensorApp");
-    QApplication::setOrganizationName("SciLabImagineering");
+    QQuickStyle::setStyle("Basic");
     QApplication app(argc, argv);
-
     QQmlApplicationEngine engine;
 
-    // 2. Instantiate and Register your Manager FIRST
-    // We do this BEFORE engine.load so QML knows what "notifManager" is immediately
-    NotifManager myNotifManager; 
-    engine.rootContext()->setContextProperty("NotifManager", &myNotifManager);
+    NotifManager myNotif; 
+    engine.rootContext()->setContextProperty("NotifManager", &myNotif);
 
-    // 3. Load QML
-    const QUrl url(QStringLiteral("qrc:/qt/qml/SensorApp/main.qml"));
+    // This path is now locked by your RESOURCE_PREFIX in CMake
+    const QUrl url(u"qrc:/qt/qml/SensorApp/main.qml"_s);
+
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
         &app, [url](QObject *obj, const QUrl &objUrl) {
-            if (!obj && url == objUrl)
-                QCoreApplication::exit(-1);
+            if (!obj && url == objUrl) QCoreApplication::exit(-1);
         }, Qt::QueuedConnection);
-    engine.load(url);
 
-    // 4. System Tray Setup (Kept exactly as you had it)
-    QSystemTrayIcon *trayIcon = new QSystemTrayIcon(QIcon(":/assets/icon.png"), &app);
-    trayIcon->show();
-    trayIcon->showMessage("SensorApp Active", "We will notify you of sensor changes.", 
-                          QSystemTrayIcon::Information, 3000);
+    engine.load(url);
 
     return app.exec();
 }

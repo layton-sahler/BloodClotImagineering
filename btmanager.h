@@ -1,5 +1,6 @@
 #ifndef BTMANAGER_H
 #define BTMANAGER_H
+
 #include <QStyle>
 #include <QApplication>
 #include <QtWidgets/QSystemTrayIcon>
@@ -18,72 +19,133 @@
 #include <QtBluetooth/QLowEnergyController>
 #include <QtBluetooth/QBluetoothLocalDevice>
 
+
 class BluetoothManager : public QObject {
     Q_OBJECT
-    QML_ELEMENT // This handles the registration automatically
+    QML_ELEMENT
     Q_PROPERTY(QStringList devices READ devices NOTIFY devicesChanged)
+    Q_PROPERTY(bool connected READ isConnected NOTIFY connectedChanged)
 
 public:
     explicit BluetoothManager(QObject *parent = nullptr) : QObject(parent) {
-    // Add this to check local adapter state
-    QBluetoothLocalDevice localDevice;
-    if (localDevice.isValid()) {
-        qDebug() << "Local Adapter Name:" << localDevice.name();
-        qDebug() << "Local Adapter Address:" << localDevice.address().toString();
-    } else {
-        qDebug() << "ERROR: No local Bluetooth adapter found!";
+        QBluetoothLocalDevice localDevice;
+        if (localDevice.isValid()) {
+            qDebug() << "Local Adapter:" << localDevice.name() << localDevice.address().toString();
+        } else {
+            qDebug() << "ERROR: No local Bluetooth adapter found!";
+        }
+
+        connect(&m_agent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered, 
+                this, &BluetoothManager::addDevice);
+        
+        // Ensure UI updates if state changes unexpectedly
+        connect(this, &BluetoothManager::connectedChanged, [](){ qDebug() << "UI Sync: Connection state updated."; });
     }
 
-    connect(&m_agent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered, 
-            this, &BluetoothManager::addDevice);
-}
+    // Destructor
+    ~BluetoothManager() {
+        if (m_controller) {
+            m_controller->disconnectFromDevice();
+        }
+        m_agent.stop();
+    }
+
+    bool isConnected() const { 
+        return m_controller && m_controller->state() == QLowEnergyController::ConnectedState; 
+    }
 
     Q_INVOKABLE void startScan() {
         m_deviceList.clear();
         m_foundDevices.clear();
         emit devicesChanged();
+        m_agent.stop();
         m_agent.start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
         qDebug() << "Scanning...";
     }
-    
-    Q_INVOKABLE void requestBluetoothEnable() {
-        QBluetoothLocalDevice localDevice;
-        
-        // Create the tray icon if it doesn't exist, or use a member variable
-        static QSystemTrayIcon *tray = new QSystemTrayIcon(this);
-        
-        // Windows requires an icon to show a message!
-        // This uses a standard system icon so you don't have to provide a file yet.
-        tray->setIcon(qApp->style()->standardIcon(QStyle::SP_MessageBoxInformation));
-        tray->show(); 
-
-        if (localDevice.hostMode() == QBluetoothLocalDevice::HostPoweredOff) {
-            qDebug() << "Bluetooth is off. Directing user and sending toast...";
-            
-            // 1. Send the Notification
-            tray->showMessage("Bluetooth Required", 
-                            "Please turn on Bluetooth to connect your sensor.", 
-                            QSystemTrayIcon::Warning, 3000);
-                            
-            // 2. Open Settings
-            QDesktopServices::openUrl(QUrl("ms-settings:bluetooth"));
-        } else {
-            tray->showMessage("SensorApp", "Bluetooth is active!", QSystemTrayIcon::Information, 2000);
-        }
-    }
 
     Q_INVOKABLE void connectToDevice(int index) {
+        m_agent.stop(); 
         if (index < 0 || index >= m_foundDevices.count()) return;
-        
+
         if (m_controller) {
             m_controller->disconnectFromDevice();
             m_controller->deleteLater();
         }
 
         m_controller = QLowEnergyController::createCentral(m_foundDevices[index], this);
-        connect(m_controller, &QLowEnergyController::connected, this, [](){
-            qDebug() << "Connected!";
+        m_controller->setRemoteAddressType(QLowEnergyController::RandomAddress);
+
+        // Link established
+        connect(m_controller, &QLowEnergyController::connected, this, [this](){
+            qDebug() << "CONNECTED! Starting service discovery...";
+            emit connectedChanged(); // Update QML visibility
+            m_controller->discoverServices(); 
         });
+
+        // Link broken
+        connect(m_controller, &QLowEnergyController::disconnected, this, [this](){
+            qDebug() << "Disconnected from device.";
+            emit connectedChanged(); // Update QML visibility
+        });
+
+        // Service discovery finished
+        connect(m_controller, &QLowEnergyController::discoveryFinished, this, [this](){
+            qDebug() << "Discovery Finished. Searching for Sensor Service...";
+            
+            // 1. Create the Service Object
+            QLowEnergyService *service = m_controller->createServiceObject(
+                QBluetoothUuid(QString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")), this);
+
+            if (service) {
+                connect(service, &QLowEnergyService::stateChanged, this, [this, service](QLowEnergyService::ServiceState state){
+                    if (state == QLowEnergyService::RemoteServiceDiscovered) {
+                        qDebug() << "SUCCESS: Sensor Service details discovered.";
+
+                        // 2. NOW look for the Characteristic UUID inside the service
+                        QLowEnergyCharacteristic sensorChar = service->characteristic(
+                            QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8")));
+
+                        if (sensorChar.isValid()) {
+                            qDebug() << "Characteristic found! Subscribing...";
+
+                            // 3. Enable Notifications (The 2902 Handshake)
+                            QLowEnergyDescriptor notification = sensorChar.descriptor(
+                                QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
+                            if (notification.isValid()) {
+                                service->writeDescriptor(notification, QByteArray::fromHex("0100"));
+                            }
+
+                            // 4. Finally, connect the data signal to THIS specific characteristic
+                            connect(service, &QLowEnergyService::characteristicChanged, 
+                                    this, [this](const QLowEnergyCharacteristic &c, const QByteArray &value){
+                                
+                                // We only care about our specific data characteristic
+                                if (c.uuid() == QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8"))) {
+                                    QString rawString = QString::fromUtf8(value);
+                                    QStringList dataParts = rawString.split(',');
+                                    emit dataReceived(dataParts);
+                                    if (dataParts.size() >= 5) {
+                                        qDebug() << "Parsed -> ECG:" << dataParts[0] << "Stretch:" << dataParts[1];
+                                    }
+                                }
+                            });
+                        } else {
+                            qDebug() << "ERROR: Characteristic UUID not found in service!";
+                        }
+                    }
+                });
+                service->discoverDetails();
+            } else {
+                qDebug() << "ERROR: Sensor Service UUID not found.";
+            }
+        });
+
+        connect(m_controller, &QLowEnergyController::errorOccurred, this, [this](QLowEnergyController::Error error){
+            qDebug() << "Bluetooth Error:" << error;
+            emit connectedChanged();
+        });
+
+        qDebug() << "Attempting to connect to" << m_foundDevices[index].name();
         m_controller->connectToDevice();
     }
 
@@ -91,16 +153,21 @@ public:
 
 signals:
     void devicesChanged();
+    void connectedChanged();
+    void dataReceived(QStringList dataparts);
 
 private slots:
     void addDevice(const QBluetoothDeviceInfo &info) {
-        QString label = info.name() + " (" + info.address().toString() + ")";
-        if (!m_deviceList.contains(label)) {
-            m_deviceList.append(label);
-            m_foundDevices.append(info);
-            emit devicesChanged();
-            qDebug() << "Found:" << label;
+        QString name = info.name();
+        if (name.isEmpty()) name = "Unknown Device";
+
+        for (const auto &existing : m_foundDevices) {
+            if (existing.address() == info.address()) return;
         }
+
+        m_deviceList.append(name + " [" + info.address().toString() + "]");
+        m_foundDevices.append(info);
+        emit devicesChanged();
     }
 
 private:
