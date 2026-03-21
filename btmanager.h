@@ -97,40 +97,36 @@ public:
                 QBluetoothUuid(QString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")), this);
 
             if (service) {
-                connect(service, &QLowEnergyService::stateChanged, this, [this, service](QLowEnergyService::ServiceState state){
-                    if (state == QLowEnergyService::RemoteServiceDiscovered) {
-                        qDebug() << "SUCCESS: Sensor Service details discovered.";
+                // 4. Finally, connect the data signal to THIS specific characteristic
+                connect(service, &QLowEnergyService::characteristicChanged, 
+                        this, [this](const QLowEnergyCharacteristic &c, const QByteArray &value){
+                    
+                    if (c.uuid() == QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8"))) {
+                        QString rawString = QString::fromUtf8(value);
+                        QStringList dataParts = rawString.split(',');
 
-                        // 2. NOW look for the Characteristic UUID inside the service
-                        QLowEnergyCharacteristic sensorChar = service->characteristic(
-                            QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8")));
+                        if (dataParts.size() >= 5) {
+                            // Convert to float for internal logic/filtering if needed
+                            bool ok;
+                            float ecgVal = dataParts[0].toFloat(&ok);
 
-                        if (sensorChar.isValid()) {
-                            qDebug() << "Characteristic found! Subscribing...";
-
-                            // 3. Enable Notifications (The 2902 Handshake)
-                            QLowEnergyDescriptor notification = sensorChar.descriptor(
-                                QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
-                            if (notification.isValid()) {
-                                service->writeDescriptor(notification, QByteArray::fromHex("0100"));
+                            if (ok) {
+                                // Determine if it's a valid voltage or a status code
+                                if (ecgVal <= 1.01f && ecgVal >= 0.99f) {
+                                    qDebug() << "STATUS: Leads are DETACHED";
+                                } else if (ecgVal == 0.0f) {
+                                    qDebug() << "STATUS: Sensor Muted/Saturated";
+                                } else {
+                                    // Valid floating point waveform data
+                                    // qDebug() << "ECG Voltage:" << ecgVal << "V";
+                                }
                             }
 
-                            // 4. Finally, connect the data signal to THIS specific characteristic
-                            connect(service, &QLowEnergyService::characteristicChanged, 
-                                    this, [this](const QLowEnergyCharacteristic &c, const QByteArray &value){
-                                
-                                // We only care about our specific data characteristic
-                                if (c.uuid() == QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8"))) {
-                                    QString rawString = QString::fromUtf8(value);
-                                    QStringList dataParts = rawString.split(',');
-                                    emit dataReceived(dataParts);
-                                    if (dataParts.size() >= 5) {
-                                        qDebug() << "Parsed -> ECG:" << dataParts[0] << "Stretch:" << dataParts[1];
-                                    }
-                                }
-                            });
-                        } else {
-                            qDebug() << "ERROR: Characteristic UUID not found in service!";
+                            // Emit the full list of strings so the QML/Chart can plot them
+                            emit dataReceived(dataParts);
+                            
+                            // Debugging output
+                            qDebug() << "Parsed -> ECG:" << dataParts[0] << "V | Stretch:" << dataParts[1];
                         }
                     }
                 });

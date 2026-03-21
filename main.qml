@@ -139,9 +139,12 @@ ApplicationWindow {
                         max: maxVisibleSamples 
                     }
 
-                    ValueAxis { 
-                        id: yAxis
-                        min: 675; max: 750
+                    ValueAxis {
+                        id: axisY
+                        min: 0.0
+                        max: 3.3
+                        tickCount: 5
+                        labelFormat: "%.2f V" // Shows 2 decimal places on the axis
                     }
 
                     LineSeries {
