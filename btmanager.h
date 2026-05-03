@@ -18,7 +18,7 @@
 #include <QtBluetooth/QBluetoothDeviceInfo>
 #include <QtBluetooth/QLowEnergyController>
 #include <QtBluetooth/QBluetoothLocalDevice>
-
+#include "DataProcessing.h"
 
 class BluetoothManager : public QObject {
     Q_OBJECT
@@ -38,11 +38,9 @@ public:
         connect(&m_agent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered, 
                 this, &BluetoothManager::addDevice);
         
-        // Ensure UI updates if state changes unexpectedly
         connect(this, &BluetoothManager::connectedChanged, [](){ qDebug() << "UI Sync: Connection state updated."; });
     }
 
-    // Destructor
     ~BluetoothManager() {
         if (m_controller) {
             m_controller->disconnectFromDevice();
@@ -75,62 +73,70 @@ public:
         m_controller = QLowEnergyController::createCentral(m_foundDevices[index], this);
         m_controller->setRemoteAddressType(QLowEnergyController::RandomAddress);
 
-        // Link established
         connect(m_controller, &QLowEnergyController::connected, this, [this](){
             qDebug() << "CONNECTED! Starting service discovery...";
-            emit connectedChanged(); // Update QML visibility
+            emit connectedChanged();
             m_controller->discoverServices(); 
         });
 
-        // Link broken
         connect(m_controller, &QLowEnergyController::disconnected, this, [this](){
             qDebug() << "Disconnected from device.";
-            emit connectedChanged(); // Update QML visibility
+            emit connectedChanged();
         });
 
-        // Service discovery finished
         connect(m_controller, &QLowEnergyController::discoveryFinished, this, [this](){
             qDebug() << "Discovery Finished. Searching for Sensor Service...";
-            
-            // 1. Create the Service Object
             QLowEnergyService *service = m_controller->createServiceObject(
                 QBluetoothUuid(QString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")), this);
 
             if (service) {
-                // 4. Finally, connect the data signal to THIS specific characteristic
-                connect(service, &QLowEnergyService::characteristicChanged, 
-                        this, [this](const QLowEnergyCharacteristic &c, const QByteArray &value){
+                connect(service, &QLowEnergyService::stateChanged, this, [this, service](QLowEnergyService::ServiceState state) {
                     
-                    if (c.uuid() == QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8"))) {
-                        QString rawString = QString::fromUtf8(value);
-                        QStringList dataParts = rawString.split(',');
+                    if (state == QLowEnergyService::RemoteServiceDiscovered) {
+                        qDebug() << "SUCCESS: Service details discovered. Looking for Characteristic...";
 
-                        if (dataParts.size() >= 5) {
-                            // Convert to float for internal logic/filtering if needed
-                            bool ok;
-                            float ecgVal = dataParts[0].toFloat(&ok);
+                        QLowEnergyCharacteristic sensorChar = service->characteristic(
+                            QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8")));
 
-                            if (ok) {
-                                // Determine if it's a valid voltage or a status code
-                                if (ecgVal <= 1.01f && ecgVal >= 0.99f) {
-                                    qDebug() << "STATUS: Leads are DETACHED";
-                                } else if (ecgVal == 0.0f) {
-                                    qDebug() << "STATUS: Sensor Muted/Saturated";
-                                } else {
-                                    // Valid floating point waveform data
-                                    // qDebug() << "ECG Voltage:" << ecgVal << "V";
-                                }
+                        if (sensorChar.isValid()) {
+                            qDebug() << "Characteristic found! Subscribing...";
+
+                            QLowEnergyDescriptor notification = sensorChar.descriptor(
+                                QBluetoothUuid::DescriptorType::ClientCharacteristicConfiguration);
+                            if (notification.isValid()) {
+                                service->writeDescriptor(notification, QByteArray::fromHex("0100"));
                             }
 
-                            // Emit the full list of strings so the QML/Chart can plot them
-                            emit dataReceived(dataParts);
-                            
-                            // Debugging output
-                            qDebug() << "Parsed -> ECG:" << dataParts[0] << "V | Stretch:" << dataParts[1];
+                            connect(service, &QLowEnergyService::characteristicChanged, 
+                                this, [this](const QLowEnergyCharacteristic &c, const QByteArray &value){
+                                
+                            if (c.uuid() == QBluetoothUuid(QString("beb5483e-36e1-4688-b7f5-ea07361b26a8"))) {
+                                QString rawString = QString::fromUtf8(value);
+                                QStringList dataParts = rawString.split(',');
+
+                                qDebug() << "New Packet Received:" << rawString;
+
+                                if (dataParts.size() < 6) return; 
+
+                                SensorMetrics metrics = m_processor.processRawPacket(dataParts, true);
+
+                                emit metricsUpdated(metrics.stretchValue, 
+                                                    metrics.bpm, 
+                                                    metrics.pulse,
+                                                    metrics.isMoving,
+                                                    metrics.restingScore,
+                                                    metrics.isConnected,
+                                                    metrics.immobility
+                                                    );
+                            }
+                        });
+                        } else {
+                            qDebug() << "ERROR: Characteristic UUID not found in service!";
                         }
                     }
                 });
-                service->discoverDetails();
+            service->discoverDetails();
+
             } else {
                 qDebug() << "ERROR: Sensor Service UUID not found.";
             }
@@ -151,7 +157,7 @@ signals:
     void devicesChanged();
     void connectedChanged();
     void dataReceived(QStringList dataparts);
-
+    void metricsUpdated(double stretch, double bpm, double pulse, bool isMoving, double restingScore, bool connected, double immobility);
 private slots:
     void addDevice(const QBluetoothDeviceInfo &info) {
         QString name = info.name();
@@ -167,6 +173,7 @@ private slots:
     }
 
 private:
+    DataProcessing m_processor;
     QLowEnergyController *m_controller = nullptr;
     QBluetoothDeviceDiscoveryAgent m_agent;
     QStringList m_deviceList;

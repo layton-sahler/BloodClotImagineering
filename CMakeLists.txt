@@ -18,7 +18,13 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-qt_add_executable(SensorApp main.cpp)
+qt_add_executable(SensorApp
+    main.cpp
+    btmanager.h
+    DataProcessing.h
+    main.qml
+    notifmanager.h
+    )
 
 qt_add_qml_module(SensorApp
     URI SensorApp
